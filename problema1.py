@@ -17,45 +17,97 @@ def imshow(img, new_fig=True, title=None, color_img=False, blocking=False, color
     if new_fig:
         plt.show(block=blocking)
 
+# Cargar imagen 
+img = cv2.imread("monedas.jpg")
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-original = cv2.imread('monedas.jpg', cv2.IMREAD_GRAYSCALE) 
-img = cv2.GaussianBlur(original, (5,5), 0)
-imshow(img, title='Imagen en escala de grises')
+# Filtrar ruido
+blur = cv2.GaussianBlur(gray, (9, 9), 0)
 
-img_canny = cv2.Canny(img, 80, 150)
-imshow(img_canny)
+#Detección de bordes con Canny
+edges = cv2.Canny(blur, 35, 110)
 
-L = 3
-kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (L, L) )
-closed = cv2.morphologyEx(img_canny, cv2.MORPH_GRADIENT, kernel)
+# Cierre morfológico 
+kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15,15))
+closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=4)
 
-imshow(closed)
+# Buscar contornos
+contours, hierarchy = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-contours, hierarchy = cv2.findContours(closed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+detecciones = {}
+conteo_dado = []
 
-# 5. Dibujar y analizar
+# Dibujar y analizar 
 output = img.copy()
 for cnt in contours:
     area = cv2.contourArea(cnt)
-    if area < 200:  # descartar ruido pequeño
+    
+    if area < 500:
         continue
 
     perimeter = cv2.arcLength(cnt, True)
-    circularity = 4 * np.pi * area / (perimeter ** 2 + 1e-6)
-
-    # Clasificar según circularidad
-    if circularity > 0.8:
-        color, label = (0,255,0), 'Moneda'
-    else:
-        color, label = (255,0,0), 'Dado'
-
-    # Dibujar contorno y etiqueta
+    
+    if perimeter < 1e-6:
+        continue
+        
+    circularity = 4 * np.pi * area / (perimeter ** 2)
+    
+    # Calcular bounding box y aspect ratio
     x, y, w, h = cv2.boundingRect(cnt)
-    cv2.drawContours(output, [cnt], -1, 2)
-    cv2.putText(output, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    aspect_ratio = float(w) / h if h > 0 else 0
+
+    # Clasificación refinada basada en datos reales:
+    # Monedas: C >= 0.85 (mayoría) o C=0.77 con AR muy cercano a 1.0
+    # Dados: C < 0.77 o C=0.77 con AR >= 1.01
+    
+    if circularity >= 0.85:
+        # Alta circularidad -> definitivamente moneda
+        color, label = (0,255,0), 'Moneda'
+    elif 0.73 <= circularity < 0.85 and aspect_ratio < 1.0:
+        # Circularidad media-alta + AR < 1.0 -> moneda problemática
+        color, label = (0,255,0), 'Moneda'
+    elif circularity > 0.60:
+        # Resto con circularidad razonable -> dado
+        color, label = (255,0,0), 'Dado'
+    else:
+        continue
+
+    cv2.drawContours(output, [cnt], -1, color, 2)
+    cv2.putText(output, f'{label}: C={circularity:.2f} A={int(area)}', (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    
+    if label == 'Dado':
+        roi = edges[y:y+h, x:x+w]
+
+        circles = cv2.HoughCircles(
+            roi,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=50,
+            param1=50,
+            param2=9,
+            minRadius=15,
+            maxRadius=20
+        )
+
+        num_puntos = 0
+        if circles is not None:
+            altura_roi = roi.shape[0]
+            for circle in circles[0]:
+                if circle[1] < altura_roi * 0.90:  
+                    num_puntos += 1
+            conteo_dado.append(num_puntos)
+
+    if label not in detecciones.keys():
+        detecciones[label] = 1
+    else:
+        detecciones[label] += 1
+
 
 # Mostrar
 plt.figure(figsize=(12,5))
-plt.subplot(1,2,1), plt.imshow(img_canny, cmap='gray'), plt.title('Bordes (Canny)'), plt.axis('off')
-plt.subplot(1,2,2), plt.imshow(cv2.cvtColor(output, cv2.COLOR_BGR2RGB)), plt.title('Objetos detectados'), plt.axis('off')
+plt.subplot(1,3,1), plt.imshow(edges, cmap='gray'), plt.title('Bordes (Canny)'), plt.axis('off')
+plt.subplot(1,3,2), plt.imshow(closed, cmap='gray'), plt.title('Morfología'), plt.axis('off')
+plt.subplot(1,3,3), plt.imshow(cv2.cvtColor(output, cv2.COLOR_BGR2RGB)), plt.title('Objetos detectados'), plt.axis('off')
 plt.show()
+print(detecciones)
+print(conteo_dado)
