@@ -55,7 +55,6 @@ for cnt in contours:
     # Calcular bounding box y aspect ratio
     x, y, w, h = cv2.boundingRect(cnt)
     aspect_ratio = float(w) / h if h > 0 else 0
-
     # Clasificación refinada basada en datos reales:
     # Monedas: C >= 0.85 (mayoría) o C=0.77 con AR muy cercano a 1.0
     # Dados: C < 0.77 o C=0.77 con AR >= 1.01
@@ -71,9 +70,17 @@ for cnt in contours:
         color, label = (255,0,0), 'Dado'
     else:
         continue
+       
+    # Clasificación de monedas
+    if label == 'Moneda':
+        if area < 60000:
+            color, label = (0,255,0), 'Moneda 10 centavos'
 
-    cv2.drawContours(output, [cnt], -1, color, 2)
-    cv2.putText(output, f'{label}: C={circularity:.2f} A={int(area)}', (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        elif area < 90000:
+             color, label = (0,255,255), 'Moneda 1 peso'
+        
+        else:
+            color, label = (0,0,255), 'Moneda 50 centavos'
     
     if label == 'Dado':
         roi = edges[y:y+h, x:x+w]
@@ -96,11 +103,15 @@ for cnt in contours:
                 if circle[1] < altura_roi * 0.90:  
                     num_puntos += 1
             conteo_dado.append(num_puntos)
+        label = f'Dado de {num_puntos} caras'
 
     if label not in detecciones.keys():
         detecciones[label] = 1
     else:
         detecciones[label] += 1
+
+    cv2.drawContours(output, [cnt], -1, color, 2)
+    cv2.putText(output, f'{label}' , (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 2, color, 2)
 
 
 # Mostrar
@@ -109,5 +120,3 @@ plt.subplot(1,3,1), plt.imshow(edges, cmap='gray'), plt.title('Bordes (Canny)'),
 plt.subplot(1,3,2), plt.imshow(closed, cmap='gray'), plt.title('Morfología'), plt.axis('off')
 plt.subplot(1,3,3), plt.imshow(cv2.cvtColor(output, cv2.COLOR_BGR2RGB)), plt.title('Objetos detectados'), plt.axis('off')
 plt.show()
-print(detecciones)
-print(conteo_dado)
