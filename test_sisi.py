@@ -28,7 +28,7 @@ for i in range(1,3):
         norm, 255, 
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv2.THRESH_BINARY_INV, 
-        21, 10
+        31,5
     )
 
     # v = np.median(binary)

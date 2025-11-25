@@ -30,7 +30,8 @@ def detectar_caracteres_en_roi(roi_binary):
             aspect_ratio = h / float(w)
             area = w * h
             
-            if 1.8 <= aspect_ratio <= 3 and area > 15:
+            # Caracteres con relación de aspecto 1.5-3.0 y área razonable
+            if 1.5 <= aspect_ratio <= 3.0 and area > 50:
                 caracteres_validos.append((x, y, w, h))
     
     # Ordenar por posición X
@@ -40,28 +41,27 @@ def detectar_caracteres_en_roi(roi_binary):
 
 
 def detectar_patentes(imagen):
-    # Cargar imagen
-    img = cv2.imread(imagen)   
+    img = cv2.imread(imagen)
+    if img is None:
+        print(f"Error: No se pudo cargar {imagen}")
+        return None
+        
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # Umbrales automáticos (mediana)
     v = np.median(gray)
-    low = int(0.3 * v)
-    high = int(0.6 * v)
+    low = int(0.66 * v)
+    high = int(1.33 * v)
 
     # Canny
     edges = cv2.Canny(gray, low, high, apertureSize=3, L2gradient=True)
-
-    #En algunos funciona bien
-    #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
-    #edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    #edges = cv2.dilate(edges, kernel, iterations=1)
 
     # Binarización con Otsu (para análisis de caracteres)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     # Contornos desde EDGES (funciona mejor)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
 
     candidatos = []
     placa_contorno = None
@@ -69,40 +69,55 @@ def detectar_patentes(imagen):
     
     for contorno in contours:
         perimetro = cv2.arcLength(contorno, True)
-        aproximacion = cv2.approxPolyDP(contorno, 0.05 * perimetro, True)
+        
+        # Probar con diferentes tolerancias de aproximación
+        for epsilon_factor in [0.01, 0.02, 0.03, 0.04]:
+            aproximacion = cv2.approxPolyDP(contorno, epsilon_factor * perimetro, True)
             
-        if 2 <= len(aproximacion) <= 6:
-            x, y, w, h = cv2.boundingRect(aproximacion)
+            # Aceptar contornos con 4 a 6 vértices (para manejar perspectiva)
+            if 4 <= len(aproximacion) <= 6:
+                x, y, w, h = cv2.boundingRect(aproximacion)
                 
-            # Validar límites
-            if x < 0 or y < 0 or x+w > binary.shape[1] or y+h > binary.shape[0]:
-                continue
+                # Validar límites
+                if x < 0 or y < 0 or x+w > binary.shape[1] or y+h > binary.shape[0]:
+                    continue
                     
-            relacion_aspecto = float(w) / h
-            area = w * h
+                relacion_aspecto = float(w) / h
+                area = w * h
                 
-
-            if 1.8 <= relacion_aspecto <= 4.5 and 1000 < area < 30000:
-                roi_binary = binary[y:y+h, x:x+w]
-                caracteres = detectar_caracteres_en_roi(roi_binary)
-                num_caracteres = len(caracteres)       
-                
-                candidatos.append({
-                        'x': x, 'y': y, 'w': w, 'h': h,
-                        'area': area,
-                        'aspecto': relacion_aspecto,
-                        'caracteres': num_caracteres,
-                        'contorno': aproximacion
-                    })     
+                # Filtros generales sin dimensiones específicas
+                # Patentes típicamente tienen aspecto entre 1.5:1 y 5:1
+                # Área razonable: ni muy pequeña ni muy grande
+                if 1.5 <= relacion_aspecto <= 5.0 and 1000 < area < 30000:
+                    roi_binary = binary[y:y+h, x:x+w]
+                    caracteres = detectar_caracteres_en_roi(roi_binary)
+                    num_caracteres = len(caracteres)
                     
-                if 2 <= num_caracteres <= 8:
-                        diferencia_6 = abs(num_caracteres - 6)
-                        score = (10 - diferencia_6) * 10000 + num_caracteres * 1000 + area
+                    # Evitar duplicados (mismo rectángulo aproximado de diferentes formas)
+                    es_duplicado = False
+                    for cand in candidatos:
+                        if abs(cand['x'] - x) < 5 and abs(cand['y'] - y) < 5:
+                            es_duplicado = True
+                            break
+                    
+                    if not es_duplicado:
+                        candidatos.append({
+                            'x': x, 'y': y, 'w': w, 'h': h,
+                            'area': area,
+                            'aspecto': relacion_aspecto,
+                            'caracteres': num_caracteres,
+                            'contorno': aproximacion
+                        })
                         
-                        if score > mejor_score:
-                            placa_contorno = aproximacion
-                            mejor_score = score
-                
+                        # Scoring: priorizar ~6 caracteres
+                        if 4 <= num_caracteres <= 8:
+                            diferencia_6 = abs(num_caracteres - 6)
+                            score = (10 - diferencia_6) * 10000 + num_caracteres * 1000 + area
+                            
+                            if score > mejor_score:
+                                placa_contorno = aproximacion
+                                mejor_score = score
+                break  # Si encontramos un candidato válido, no probar más epsilons
     
     # Visualización
     output_contornos = img.copy()
@@ -171,8 +186,7 @@ def detectar_patentes(imagen):
         
         return None
 
-for i in range(1, 13, 1):
-    if i < 10:
-        detectar_patentes(f'img0{i}.png')
-    else:
-        detectar_patentes(f'img{i}.png')
+
+# Procesar imágenes
+for i in range(1, 9):
+    coordenadas = detectar_patentes(f'img0{i}.png')
