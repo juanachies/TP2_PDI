@@ -72,7 +72,7 @@ for cnt in contours:
         continue
        
     # Clasificación de monedas
-    if label == 'Moneda':
+    if label == 'Moneda': # hacerlo en porcentaje (valor max)
         if area < 60000:
             color, label = (0,255,0), 'Moneda 10 centavos'
 
