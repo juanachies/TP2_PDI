@@ -18,7 +18,8 @@ def imshow(img, new_fig=True, title=None, color_img=False, blocking=False, color
         plt.show(block=blocking)
 
 
-def detectar_patentes_final(ruta_imagen):
+def detectar_patentes(ruta_imagen):
+
     img = cv2.imread(ruta_imagen)
     
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -81,45 +82,69 @@ def detectar_patentes_final(ruta_imagen):
     # ordenamos por score
     candidatos.sort(key=lambda x: x['score'], reverse=True)
 
-    titulo = "NO DETECTADA"
-    if len(candidatos) > 0:
-        # El ganador es el Score más alto
-        patente = candidatos[0]
-        print(patente.values())
-        #box, score, x, y, h, w = patente.values()
-        cv2.drawContours(output, [patente['box']], 0, (0, 255, 0), 3)
-        
-        # Escribimos el score para entender por qué ganó
-        pos_txt = (patente['box'][1][0], patente['box'][1][1]) # Una esquina
-        cv2.putText(output, f"{patente['score']:.0f}", pos_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-        
-        titulo = "PATENTE DETECTADA"
-        
-        # Dibujar perdedores en rojo
-        for cand in candidatos[1:]:
-            cv2.drawContours(output, [cand['box']], 0, (0, 0, 255), 1)
-        
-        imshow(img[y: y+h, x : x+w])
-
-
-
-
+    # El ganador es el Score más alto
+    patente = candidatos[0]
+    box, score, x, y, h, w = patente.values()
+    x, y, h, w = int(x), int(y), int(h), int(w)
+    x1 = int(x - w / 2)
+    y1 = int(y - h / 2)
+    cv2.drawContours(output, [box], 0, (0, 255, 0), 3)
+    
+    patente = (img[y1:y1+h, x1:x1+w])
 
     # Mostrar
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].imshow(thresh, cmap='gray')
-    axes[0].set_title("Morfología")
-    axes[0].axis('off')
+    # fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # axes[0].imshow(thresh, cmap='gray')
+    # axes[0].set_title("Morfología")
+    # axes[0].axis('off')
     
-    color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
-    axes[1].imshow(color)
-    axes[1].set_title(titulo)
-    axes[1].axis('off')
-    plt.show()
+    # color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
+    # axes[1].imshow(color)
+    # axes[1].set_title('Patente detectada')
+    # axes[1].axis('off')
+    # plt.show()
+
+    return patente
+
+def detectar_letras(img):
+    vis = img.copy()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    erosion = cv2.erode(thresh, kernel, iterations=1)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
+    areas = stats[:, cv2.CC_STAT_AREA]
+    widths = stats[:, cv2.CC_STAT_WIDTH]
+    heights = stats[:, cv2.CC_STAT_HEIGHT]
+
+    for i in range(1, num_labels):  # i=0 es el fondo
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+        area = stats[i, cv2.CC_STAT_AREA]
+
+        # (opcional) filtro mínimo solo para que no moleste el ruido
+        # if area < 10:
+        #     continue
+
+        cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
+    imshow(vis)
+
+
+
+    
 
 # Ejecutar
-for i in range(1, 2, 1):
+for i in range(1, 13, 1):
     if i < 10:
-        detectar_patentes_final(f'img0{i}.png')
+        patente = detectar_patentes(f'img0{i}.png')
+        detectar_letras(patente)
     else:
-        detectar_patentes_final(f'img{i}.png')
+        patente = detectar_patentes(f'img{i}.png')
+        detectar_letras(patente)
+
