@@ -18,161 +18,186 @@ def imshow(img, new_fig=True, title=None, color_img=False, blocking=False, color
         plt.show(block=blocking)
 
 
-def detectar_caracteres_en_roi(roi_binary):
-    """Detecta caracteres en la ROI binarizada"""
-    contours_chars, _ = cv2.findContours(roi_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    caracteres_validos = []
-    for cnt in contours_chars:
-        x, y, w, h = cv2.boundingRect(cnt)
-        
-        if h > 0 and w > 0:
-            aspect_ratio = h / float(w)
-            area = w * h
-            
-            if 1.8 <= aspect_ratio <= 3 and area > 15:
-                caracteres_validos.append((x, y, w, h))
-    
-    # Ordenar por posición X
-    caracteres_validos.sort(key=lambda c: c[0])
-    
-    return caracteres_validos
-
-
-def detectar_patentes(imagen):
-    # Cargar imagen
-    img = cv2.imread(imagen)   
+def detectar_patentes(ruta_imagen):
+    img = cv2.imread(ruta_imagen)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
 
-    # Umbrales automáticos (mediana)
-    v = np.median(gray)
-    low = int(0.3 * v)
-    high = int(0.6 * v)
+    # TopHat 
+    rectKernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
+    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, rectKernel)
 
-    # Canny
-    edges = cv2.Canny(gray, low, high, apertureSize=3, L2gradient=True)
+    # Sobel 
+    sobelX = cv2.Sobel(tophat, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
+    sobelX = np.absolute(sobelX)
+    minVal, maxVal = np.min(sobelX), np.max(sobelX)
+    sobelX = (255 * ((sobelX - minVal) / (maxVal - minVal))).astype("uint8")
 
-    #En algunos funciona bien
-    #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
-    #edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    #edges = cv2.dilate(edges, kernel, iterations=1)
+    # Limpieza y fusión
+    sobelX = cv2.morphologyEx(sobelX, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)))
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 3)) 
+    thresh = cv2.morphologyEx(sobelX, cv2.MORPH_CLOSE, close_kernel)
+    _, thresh = cv2.threshold(thresh, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thresh = cv2.dilate(thresh, None, iterations=2)
 
-    # Binarización con Otsu (para análisis de caracteres)
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Contornos desde EDGES (funciona mejor)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+    # Contornos
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidatos = []
-    placa_contorno = None
-    mejor_score = 0
     
-    for contorno in contours:
-        perimetro = cv2.arcLength(contorno, True)
-        aproximacion = cv2.approxPolyDP(contorno, 0.05 * perimetro, True)
+    for c in contours:
+        rect = cv2.minAreaRect(c) 
+        box = cv2.boxPoints(rect)
+        box = np.int32(box)
+        
+        (x, y), (h, w), angle = rect
             
-        if 2 <= len(aproximacion) <= 6:
-            x, y, w, h = cv2.boundingRect(aproximacion)
-                
-            # Validar límites
-            if x < 0 or y < 0 or x+w > binary.shape[1] or y+h > binary.shape[0]:
-                continue
-                    
-            relacion_aspecto = float(w) / h
-            area = w * h
-                
+        aspect_ratio = w / float(h)
+        area = w * h
+        
+        # Filtros de aspecto y tamaño
+        if (2.2 <= aspect_ratio <= 5.0) and (1000 < area < 8000) and (h < w):
+            
+            # Score
+            center_x = rect[0][0]
+            dist_center_x = abs(center_x - (width / 2))
+            factor_centralidad = 1 - (dist_center_x / (width / 2))
+            
+            score = area * (factor_centralidad ** 3) * (y**2)
+            
+            candidatos.append({'box': box, 'score': score, 'x': x, 'y': y, 'h': h, 'w': w})
 
-            if 1.8 <= relacion_aspecto <= 4.5 and 1000 < area < 30000:
-                roi_binary = binary[y:y+h, x:x+w]
-                caracteres = detectar_caracteres_en_roi(roi_binary)
-                num_caracteres = len(caracteres)       
-                
-                candidatos.append({
-                        'x': x, 'y': y, 'w': w, 'h': h,
-                        'area': area,
-                        'aspecto': relacion_aspecto,
-                        'caracteres': num_caracteres,
-                        'contorno': aproximacion
-                    })     
-                    
-                if 2 <= num_caracteres <= 8:
-                        diferencia_6 = abs(num_caracteres - 6)
-                        score = (10 - diferencia_6) * 10000 + num_caracteres * 1000 + area
-                        
-                        if score > mejor_score:
-                            placa_contorno = aproximacion
-                            mejor_score = score
-                
+    output = img.copy()
     
-    # Visualización
-    output_contornos = img.copy()
-    cv2.drawContours(output_contornos, contours, -1, (0,255,0), 1)
+    # Mejor score como patente
+    candidatos.sort(key=lambda x: x['score'], reverse=True)
+
+    patente = candidatos[0]
+    box, score, x, y, h, w = patente.values()
+    x, y, h, w = int(x), int(y), int(h), int(w)
+    x1 = int(x - w / 2)
+    y1 = int(y - h / 2)
+    cv2.drawContours(output, [box], 0, (0, 255, 0), 3)
     
-    output_candidatos = img.copy()
-    for idx, cand in enumerate(candidatos):
-        x, y, w, h = cand['x'], cand['y'], cand['w'], cand['h']
-        color = (0, 255, 0) if cand['caracteres'] >= 4 else (0, 0, 255)
-        cv2.rectangle(output_candidatos, (x, y), (x+w, y+h), color, 2)
-        texto = f"#{idx+1}:{cand['caracteres']}ch"
-        cv2.putText(output_candidatos, texto, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+    patente = (img[y1:y1+h, x1:x1+w])
+
+    # Mostrar
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].imshow(thresh, cmap='gray')
+    axes[0].set_title("Morfología")
+    axes[0].axis('off')
     
-    # Resultado final
-    if placa_contorno is not None:
-        x, y, w, h = cv2.boundingRect(placa_contorno)
-        output_final = img.copy()
-        cv2.rectangle(output_final, (x, y), (x+w, y+h), (0, 255, 0), 3)
-        
-        patente_roi = img[y:y+h, x:x+w]
-        
-        print(f"\n✓ PATENTE DETECTADA en {imagen}")
-        print(f"  Coordenadas: x={x}, y={y}, w={w}, h={h}")
-        print(f"  Total candidatos evaluados: {len(candidatos)}")
-        
-        # Mostrar resultados
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-        
-        axes[0, 0].imshow(cv2.cvtColor(output_contornos, cv2.COLOR_BGR2RGB))
-        axes[0, 0].set_title("Todos los contornos")
-        axes[0, 0].axis("off")
-        
-        axes[0, 1].imshow(cv2.cvtColor(output_candidatos, cv2.COLOR_BGR2RGB))
-        axes[0, 1].set_title(f"Candidatos ({len(candidatos)})")
-        axes[0, 1].axis("off")
-        
-        axes[1, 0].imshow(cv2.cvtColor(output_final, cv2.COLOR_BGR2RGB))
-        axes[1, 0].set_title("Patente Detectada")
-        axes[1, 0].axis("off")
-        
-        axes[1, 1].imshow(cv2.cvtColor(patente_roi, cv2.COLOR_BGR2RGB))
-        axes[1, 1].set_title("ROI Patente")
-        axes[1, 1].axis("off")
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return (x, y, w, h)
+    color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
+    axes[1].imshow(color)
+    axes[1].set_title('Patente detectada')
+    axes[1].axis('off')
+    plt.show()
+
+    return patente
+
+
+def detectar_letras(img):
+    # Escalado
+    h, w = img.shape[:2]
+    scale = 3
+    img_scaled = cv2.resize(img, (w*scale, h*scale), interpolation=cv2.INTER_CUBIC)
+    vis_scaled = img_scaled.copy()
+    
+    gray = cv2.cvtColor(img_scaled, cv2.COLOR_BGR2GRAY)
+    
+    # Threshold 
+    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Erosión
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2,2))
+    eroded = cv2.erode(thresh, kernel_erode, iterations=3)
+    
+    # Dilatación
+    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    dilated = cv2.dilate(eroded, kernel_dilate, iterations=2) ## cambie aca
+
+    # Limpieza de ruido pequeño
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    cleaned = cv2.morphologyEx(dilated, cv2.MORPH_OPEN, kernel_small, iterations=1)
+
+    imshow(cleaned, title='Imagen binarizada y procesada')
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(cleaned, 8, cv2.CV_32S)
+    caracteres = []
+    
+    # Para filtros adaptativos
+    alturas = []
+    anchos = []
+    for i in range(1, num_labels):
+        h_comp = stats[i, cv2.CC_STAT_HEIGHT]
+        w_comp = stats[i, cv2.CC_STAT_WIDTH]
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area > 80:
+            alturas.append(h_comp)
+            anchos.append(w_comp)
+    
+    if len(alturas) > 0:
+        altura_media = np.median(alturas)
+        ancho_medio = np.median(anchos)
     else:
-        print(f"\n✗ No se detectó patente en {imagen}")
-        print(f"  Total candidatos evaluados: {len(candidatos)}")
-        
-        # Mostrar solo contornos y candidatos
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-        
-        axes[0].imshow(cv2.cvtColor(output_contornos, cv2.COLOR_BGR2RGB))
-        axes[0].set_title("Todos los contornos")
-        axes[0].axis("off")
-        
-        axes[1].imshow(cv2.cvtColor(output_candidatos, cv2.COLOR_BGR2RGB))
-        axes[1].set_title(f"Candidatos ({len(candidatos)})")
-        axes[1].axis("off")
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return None
+        altura_media = img_scaled.shape[0] * 0.6
+        ancho_medio = img_scaled.shape[1] * 0.1
 
-for i in range(1, 13, 1):
+    for i in range(1, num_labels):
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+        area = stats[i, cv2.CC_STAT_AREA]
+
+        # Filtros adaptativos
+        aspect_ratio = h / float(w) if w > 0 else 0
+
+        area_min = altura_media * ancho_medio * 0.15
+        area_max = altura_media * ancho_medio * 6
+        
+        if not (
+            (area_min <= area <= area_max) and
+            (0.6 <= aspect_ratio <= 6.5) and
+            (altura_media * 0.3 <= h <= altura_media * 2.8) and
+            (ancho_medio * 0.8 <= w <= ancho_medio * 4.5)
+        ):
+            continue
+
+
+        cv2.rectangle(vis_scaled, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        crop = img_scaled[y:y+h, x:x+w]
+        caracteres.append({"x": x, "crop": crop})
+
+    # Ordenar
+    caracteres.sort(key=lambda c: c["x"])
+
+    total_plots = 1 + len(caracteres)
+    cols = 6
+    rows = int(np.ceil(total_plots / cols))
+
+    plt.figure(figsize=(16, 4 * rows))
+    plt.subplot(rows, cols, 1)
+    plt.imshow(cv2.cvtColor(vis_scaled, cv2.COLOR_BGR2RGB))
+    plt.title("Imagen con bounding boxes")
+    plt.axis("off")
+
+    for idx, item in enumerate(caracteres):
+        plt.subplot(rows, cols, idx + 2)
+        plt.imshow(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
+        plt.title(f"Carácter {idx+1}")
+        plt.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+    return caracteres
+
+
+# Ejecutar
+for i in [1]:
     if i < 10:
-        detectar_patentes(f'img0{i}.png')
+        patente = detectar_patentes(f'img0{i}.png')
+        detectar_letras(patente)
     else:
-        detectar_patentes(f'img{i}.png')
+        patente = detectar_patentes(f'img{i}.png')
+        detectar_letras(patente)

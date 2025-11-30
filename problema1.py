@@ -18,7 +18,7 @@ def imshow(img, new_fig=True, title=None, color_img=False, blocking=False, color
         plt.show(block=blocking)
 
 # Cargar imagen 
-img = cv2.imread("monedas.jpg")
+img = cv2.imread("monedas.jpg", cv2.IMREAD_COLOR)
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 # Filtrar ruido
@@ -41,13 +41,9 @@ conteo_dado = []
 output = img.copy()
 for cnt in contours:
     area = cv2.contourArea(cnt)
-    
-    if area < 500:
-        continue
-
     perimeter = cv2.arcLength(cnt, True)
-    
-    if perimeter < 1e-6:
+
+    if area < 500 or perimeter < 1e-6:
         continue
         
     circularity = 4 * np.pi * area / (perimeter ** 2)
@@ -55,33 +51,27 @@ for cnt in contours:
     # Calcular bounding box y aspect ratio
     x, y, w, h = cv2.boundingRect(cnt)
     aspect_ratio = float(w) / h if h > 0 else 0
-    # Clasificación refinada basada en datos reales:
-    # Monedas: C >= 0.85 (mayoría) o C=0.77 con AR muy cercano a 1.0
-    # Dados: C < 0.77 o C=0.77 con AR >= 1.01
     
+    # Clasificación de monedas y dados
     if circularity >= 0.85:
-        # Alta circularidad -> definitivamente moneda
         color, label = (0,255,0), 'Moneda'
     elif 0.73 <= circularity < 0.85 and aspect_ratio < 1.0:
-        # Circularidad media-alta + AR < 1.0 -> moneda problemática
         color, label = (0,255,0), 'Moneda'
     elif circularity > 0.60:
-        # Resto con circularidad razonable -> dado
         color, label = (255,0,0), 'Dado'
     else:
         continue
        
     # Clasificación de monedas
-    if label == 'Moneda': # hacerlo en porcentaje (valor max)
+    if label == 'Moneda':
         if area < 60000:
             color, label = (0,255,0), 'Moneda 10 centavos'
-
         elif area < 90000:
              color, label = (0,255,255), 'Moneda 1 peso'
-        
         else:
             color, label = (0,0,255), 'Moneda 50 centavos'
     
+    # Clasificación de dados
     if label == 'Dado':
         roi = edges[y:y+h, x:x+w]
 
