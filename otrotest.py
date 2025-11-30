@@ -93,80 +93,115 @@ def detectar_patentes(ruta_imagen):
     patente = (img[y1:y1+h, x1:x1+w])
 
     # Mostrar
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].imshow(thresh, cmap='gray')
-    axes[0].set_title("Morfología")
-    axes[0].axis('off')
+    # fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # axes[0].imshow(thresh, cmap='gray')
+    # axes[0].set_title("Morfología")
+    # axes[0].axis('off')
     
-    color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
-    axes[1].imshow(color)
-    axes[1].set_title('Patente detectada')
-    axes[1].axis('off')
-    plt.show()
+    # color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
+    # axes[1].imshow(color)
+    # axes[1].set_title('Patente detectada')
+    # axes[1].axis('off')
+    # plt.show()
 
     return patente
 
 def detectar_letras(img):
-    h, w = img.shape[:2]
-    img_big = cv2.resize(img, (w*4, h*4))
     vis = img.copy()
-    gray = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY)
     
+    # Escalar imagen para mejor resolución
+    h, w = img.shape[:2]
+    scale = 3
+    img_scaled = cv2.resize(img, (w*scale, h*scale), interpolation=cv2.INTER_CUBIC)
+    vis_scaled = img_scaled.copy()
+    
+    gray = cv2.cvtColor(img_scaled, cv2.COLOR_BGR2GRAY)
+    
+    # Threshold Otsu SIN inversión
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    #thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5) # probar blockSize = 11..51 (impar), C = -5..5
     
+    # Erosión fuerte para separar caracteres conectados
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2,2))
+    eroded = cv2.erode(thresh, kernel_erode, iterations=3)
+    
+    # Dilatación para reconstruir los caracteres
+    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    reconstructed = cv2.dilate(eroded, kernel_dilate, iterations=2)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    erosion = cv2.erode(thresh, kernel, iterations=1)
+    # Limpieza de ruido pequeño
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    cleaned = cv2.morphologyEx(reconstructed, cv2.MORPH_OPEN, kernel_small, iterations=1)
 
-    #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    #opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    imshow(cleaned)
 
-    #kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    #dilated = cv2.dilate(erosion, kernel2, iterations=1)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(cleaned, 8, cv2.CV_32S)
 
+    caracteres = []
+    
+    # Calcular altura media de componentes para filtros adaptativos
+    alturas = []
+    anchos = []
+    for i in range(1, num_labels):
+        h_comp = stats[i, cv2.CC_STAT_HEIGHT]
+        w_comp = stats[i, cv2.CC_STAT_WIDTH]
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area > 50:
+            alturas.append(h_comp)
+            anchos.append(w_comp)
+    
+    if len(alturas) > 0:
+        altura_media = np.median(alturas)
+        ancho_medio = np.median(anchos)
+    else:
+        altura_media = img_scaled.shape[0] * 0.6
+        ancho_medio = img_scaled.shape[1] * 0.1
 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(erosion, 8, cv2.CV_32S)
-
-    caracteres = []  # acá guardamos bounding boxes + crops
-
-    for i in range(1, num_labels):  # i=0 es fondo
+    for i in range(1, num_labels):
         x = stats[i, cv2.CC_STAT_LEFT]
         y = stats[i, cv2.CC_STAT_TOP]
         w = stats[i, cv2.CC_STAT_WIDTH]
         h = stats[i, cv2.CC_STAT_HEIGHT]
         area = stats[i, cv2.CC_STAT_AREA]
 
+        # Filtros adaptativos
+        aspect_ratio = h / float(w) if w > 0 else 0
         
-        if area < 20 or area > 1000:
+        # Área basada en dimensiones medias
+        area_min = altura_media * ancho_medio * 0.15
+        area_max = altura_media * ancho_medio * 6
+        
+        if area < area_min or area > area_max:
             continue
-        if h <= w:
+        
+        # Caracteres típicamente más altos que anchos
+        if aspect_ratio < 0.6 or aspect_ratio > 6.5:
+            continue
+        
+        # Altura y ancho razonables
+        if h < altura_media * 0.3 or h > altura_media * 2.8:
+            continue
+        if w < ancho_medio * 0.2 or w > ancho_medio * 4.5:
             continue
 
-        # dibujar rectángulo
-        cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), 2)
-
-        crop = img[y:y+h, x:x+w]
-
+        cv2.rectangle(vis_scaled, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        crop = img_scaled[y:y+h, x:x+w]
         caracteres.append({"x": x, "crop": crop})
 
-    # ----------- ORDENAR LEFT→RIGHT -----------
+    # Ordenar left→right
     caracteres.sort(key=lambda c: c["x"])
 
-    # ---- SUBPLOTS ----
+    # Subplots
     total_plots = 1 + len(caracteres)
     cols = 6
     rows = int(np.ceil(total_plots / cols))
 
     plt.figure(figsize=(16, 4 * rows))
 
-    # 1) Imagen original
     plt.subplot(rows, cols, 1)
-    plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+    plt.imshow(cv2.cvtColor(vis_scaled, cv2.COLOR_BGR2RGB))
     plt.title("Imagen con bounding boxes")
     plt.axis("off")
 
-    # 2) Mostrar cada carácter
     for idx, item in enumerate(caracteres):
         plt.subplot(rows, cols, idx + 2)
         plt.imshow(cv2.cvtColor(item["crop"], cv2.COLOR_BGR2RGB))
@@ -176,10 +211,10 @@ def detectar_letras(img):
     plt.tight_layout()
     plt.show()
 
-    return caracteres  # útil si querés procesarlos después
+    return caracteres
 
 # Ejecutar
-for i in range(1, 13, 1):
+for i in range(1, 12, 1):
     if i < 10:
         patente = detectar_patentes(f'img0{i}.png')
         detectar_letras(patente)
@@ -189,38 +224,3 @@ for i in range(1, 13, 1):
 
 
 
-'''
-def detectar_letras(img):
-    h, w = img.shape[:2]
-    img_big = cv2.resize(img, (w*4, h*4))
-    vis = img.copy()
-    gray = cv2.cvtColor(img_big, cv2.COLOR_BGR2GRAY)
-
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (w // 10, w // 10)) ### revisar
-    erosion = cv2.erode(thresh, kernel, iterations=1)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].imshow(img_big)
-    axes[1].imshow(erosion, cmap='gray')
-    plt.show()
-
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
-    areas = stats[:, cv2.CC_STAT_AREA]
-    widths = stats[:, cv2.CC_STAT_WIDTH]
-    heights = stats[:, cv2.CC_STAT_HEIGHT]
-
-    for i in range(1, num_labels):  # i=0 es el fondo
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        area = stats[i, cv2.CC_STAT_AREA]
-
-        # (opcional) filtro mínimo solo para que no moleste el ruido
-        # if area < 10:
-        #     continue
-
-        cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), 2)
-'''
