@@ -93,27 +93,34 @@ def detectar_patentes(ruta_imagen):
     patente = (img[y1:y1+h, x1:x1+w])
 
     # Mostrar
-    # fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    # axes[0].imshow(thresh, cmap='gray')
-    # axes[0].set_title("Morfología")
-    # axes[0].axis('off')
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].imshow(thresh, cmap='gray')
+    axes[0].set_title("Morfología")
+    axes[0].axis('off')
     
-    # color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
-    # axes[1].imshow(color)
-    # axes[1].set_title('Patente detectada')
-    # axes[1].axis('off')
-    # plt.show()
+    color = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
+    axes[1].imshow(color)
+    axes[1].set_title('Patente detectada')
+    axes[1].axis('off')
+    plt.show()
 
     return patente
 
 def detectar_letras(img):
+    h, w = img.shape[:2]
+    img_big = cv2.resize(img, (w*4, h*4))
     vis = img.copy()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(img_big, cv2.COLOR_BGR2GRAY)
 
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (w // 10, w // 10)) ### revisar
     erosion = cv2.erode(thresh, kernel, iterations=1)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].imshow(img_big)
+    axes[1].imshow(erosion, cmap='gray')
+    plt.show()
 
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, 8, cv2.CV_32S)
     areas = stats[:, cv2.CC_STAT_AREA]
@@ -133,14 +140,14 @@ def detectar_letras(img):
 
         cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    imshow(vis)
+    #imshow(vis)
 
 
 
     
 
 # Ejecutar
-for i in range(1, 13, 1):
+for i in range(1, 3, 1):
     if i < 10:
         patente = detectar_patentes(f'img0{i}.png')
         detectar_letras(patente)
