@@ -94,6 +94,60 @@ def detectar_patentes(ruta_imagen):
 
     return patente
 
+def mostrar_letras(img, img_cleaned):
+    img_boxes = img.copy()
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(img_cleaned, 8, cv2.CV_32S)
+    caracteres = []
+    
+    # Para filtros adaptativos
+    alturas = []
+    anchos = []
+    for i in range(1, num_labels):
+        h_comp = stats[i, cv2.CC_STAT_HEIGHT]
+        w_comp = stats[i, cv2.CC_STAT_WIDTH]
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area > 80:
+            alturas.append(h_comp)
+            anchos.append(w_comp)
+    
+    if len(alturas) > 0:
+        altura_media = np.median(alturas)
+        ancho_medio = np.median(anchos)
+    else:
+        altura_media = img.shape[0] * 0.6
+        ancho_medio = img.shape[1] * 0.1
+
+    for i in range(1, num_labels):
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+        area = stats[i, cv2.CC_STAT_AREA]
+
+        # Filtros adaptativos
+        aspect_ratio = h / float(w) if w > 0 else 0
+
+        area_min = altura_media * ancho_medio * 0.15
+        area_max = altura_media * ancho_medio * 6
+        
+        if not (
+            (area_min <= area <= area_max) and
+            (0.6 <= aspect_ratio <= 6.5) and
+            (altura_media * 0.3 <= h <= altura_media * 2.8) and
+            (ancho_medio * 0.8 <= w <= ancho_medio * 4.5)
+        ):
+            continue
+
+        crop = img[y:y+h, x:x+w].copy()
+        caracteres.append({"x": x, "crop": crop})
+        cv2.rectangle(img_boxes, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        
+    # Ordenar
+    caracteres.sort(key=lambda c: c["x"])
+
+    return caracteres, img_boxes
+
 
 def detectar_letras(img):
     # Escalado
@@ -119,56 +173,14 @@ def detectar_letras(img):
     kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     cleaned = cv2.morphologyEx(dilated, cv2.MORPH_OPEN, kernel_small, iterations=1)
 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(cleaned, 8, cv2.CV_32S)
-    caracteres = []
-    
-    # Para filtros adaptativos
-    alturas = []
-    anchos = []
-    for i in range(1, num_labels):
-        h_comp = stats[i, cv2.CC_STAT_HEIGHT]
-        w_comp = stats[i, cv2.CC_STAT_WIDTH]
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > 80:
-            alturas.append(h_comp)
-            anchos.append(w_comp)
-    
-    if len(alturas) > 0:
-        altura_media = np.median(alturas)
-        ancho_medio = np.median(anchos)
-    else:
-        altura_media = img_scaled.shape[0] * 0.6
-        ancho_medio = img_scaled.shape[1] * 0.1
+    caracteres, vis_scaled = mostrar_letras(img_scaled, cleaned)
 
-    for i in range(1, num_labels):
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        area = stats[i, cv2.CC_STAT_AREA]
+    if len(caracteres) != 6:
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        cleaned = cv2.morphologyEx(dilated, cv2.MORPH_OPEN, kernel_small, iterations=2)
+        caracteres, vis_scaled = mostrar_letras(img_scaled, cleaned)
 
-        # Filtros adaptativos
-        aspect_ratio = h / float(w) if w > 0 else 0
-
-        area_min = altura_media * ancho_medio * 0.15
-        area_max = altura_media * ancho_medio * 6
-        
-        if not (
-            (area_min <= area <= area_max) and
-            (0.6 <= aspect_ratio <= 6.5) and
-            (altura_media * 0.3 <= h <= altura_media * 2.8) and
-            (ancho_medio * 0.8 <= w <= ancho_medio * 4.5)
-        ):
-            continue
-
-        cv2.rectangle(vis_scaled, (x, y), (x + w, y + h), (255, 0, 0), 2)
-        crop = img_scaled[y:y+h, x:x+w]
-        caracteres.append({"x": x, "crop": crop})
-
-    # Ordenar
-    caracteres.sort(key=lambda c: c["x"])
-
-    total_plots = 2 + len(caracteres)
+    total_plots = 1 + len(caracteres)
     cols = 4
     rows = int(np.ceil(total_plots / cols))
 
@@ -196,7 +208,7 @@ def detectar_letras(img):
 
 
 # Ejecutar
-for i in range(1, 13):
+for i in range(1,2):
     if i < 10:
         patente = detectar_patentes(f'img0{i}.png')
         detectar_letras(patente)
